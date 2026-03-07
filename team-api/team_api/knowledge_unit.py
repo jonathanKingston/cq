@@ -3,6 +3,7 @@
 import uuid
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -58,7 +59,7 @@ class Evidence(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def set_default_timestamps(cls, data: dict) -> dict:
+    def set_default_timestamps(cls, data: dict[str, Any]) -> dict[str, Any]:
         """Ensure timestamp consistency on creation."""
         if isinstance(data, dict):
             first = data.get("first_observed")
