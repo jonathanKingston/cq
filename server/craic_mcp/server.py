@@ -1,7 +1,7 @@
 """CRAIC MCP server — shared agent knowledge commons.
 
-Exposes five tools via the Model Context Protocol:
-craic_query, craic_propose, craic_confirm, craic_flag, craic_reflect.
+Exposes six tools via the Model Context Protocol:
+craic_query, craic_propose, craic_confirm, craic_flag, craic_reflect, craic_status.
 
 Searches local store first, then the team API. Degrades gracefully
 to local-only mode when the team API is unreachable.
@@ -460,6 +460,23 @@ def craic_reflect(session_context: str) -> dict:
         "message": "Session context received. Identify candidate knowledge units and submit each via craic_propose.",
         "status": "stub",
     }
+
+
+@mcp.tool()
+def craic_status() -> dict:
+    """Return local knowledge store statistics.
+
+    Provides an overview of the local store: total knowledge unit count,
+    domain tag breakdown, most recent additions, and confidence score
+    distribution across defined buckets.
+
+    Returns:
+        Dict with ``total_count``, ``domain_counts``, ``recent``
+        (serialised knowledge units), and ``confidence_distribution``.
+    """
+    store = _get_store()
+    result = store.stats()
+    return result.model_dump(mode="json")
 
 
 def main() -> None:
