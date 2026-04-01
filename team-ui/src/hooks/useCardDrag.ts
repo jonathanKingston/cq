@@ -102,6 +102,7 @@ function resetDragState(
   setOffset: (offset: DragOffset) => void,
   setDragProgress: (progress: number) => void,
   setIsDragging: (dragging: boolean) => void,
+  setDragAxis: (axis: DragAxis | null) => void,
   startPos: React.RefObject<{ x: number; y: number } | null>,
   pointerId: React.RefObject<number | null>,
   dragStartTarget: React.RefObject<EventTarget | null>,
@@ -112,6 +113,7 @@ function resetDragState(
   dragStartTarget.current = null;
   lockedAxis.current = null;
   setIsDragging(false);
+  setDragAxis(null);
   setOffset({ x: 0, y: 0 });
   setDragProgress(0);
 }
@@ -125,6 +127,7 @@ export function useCardDrag(
   const [isDragging, setIsDragging] = useState(false);
   const [isFlyingOff, setIsFlyingOff] = useState(false);
   const flyingOffRef = useRef(false);
+  const [dragAxis, setDragAxis] = useState<DragAxis | null>(null);
   // Drag progress is stored as state so it is only written from event handlers,
   // not computed by reading cardRef during render.
   const [dragProgress, setDragProgress] = useState(0);
@@ -163,6 +166,7 @@ export function useCardDrag(
     startPos.current = { x: e.clientX, y: e.clientY };
     dragStartTarget.current = e.target;
     lockedAxis.current = null;
+    setDragAxis(null);
   }, [disabled]);
 
   const onPointerMove = useCallback(
@@ -187,6 +191,7 @@ export function useCardDrag(
             setOffset,
             setDragProgress,
             setIsDragging,
+            setDragAxis,
             startPos,
             pointerId,
             dragStartTarget,
@@ -200,6 +205,7 @@ export function useCardDrag(
         }
 
         lockedAxis.current = axis;
+        setDragAxis(axis);
         setIsDragging(true);
         (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
       }
@@ -233,12 +239,14 @@ export function useCardDrag(
         dragStartTarget.current = null;
         lockedAxis.current = null;
         setIsDragging(false);
+        setDragAxis(null);
         onCommit(action);
       } else {
         resetDragState(
           setOffset,
           setDragProgress,
           setIsDragging,
+          setDragAxis,
           startPos,
           pointerId,
           dragStartTarget,
@@ -257,6 +265,7 @@ export function useCardDrag(
         setOffset,
         setDragProgress,
         setIsDragging,
+        setDragAxis,
         startPos,
         pointerId,
         dragStartTarget,
@@ -273,6 +282,7 @@ export function useCardDrag(
     startPos.current = { x: touch.clientX, y: touch.clientY };
     dragStartTarget.current = e.target;
     lockedAxis.current = null;
+    setDragAxis(null);
   }, [disabled]);
 
   const onTouchMoveCapture = useCallback(
@@ -294,6 +304,7 @@ export function useCardDrag(
           startPos.current = null;
           dragStartTarget.current = null;
           lockedAxis.current = null;
+          setDragAxis(null);
           return;
         }
 
@@ -302,6 +313,7 @@ export function useCardDrag(
         }
 
         lockedAxis.current = axis;
+        setDragAxis(axis);
         setIsDragging(true);
       }
 
@@ -323,6 +335,7 @@ export function useCardDrag(
       if (!startPos.current) {
         dragStartTarget.current = null;
         lockedAxis.current = null;
+        setDragAxis(null);
         return;
       }
 
@@ -343,12 +356,14 @@ export function useCardDrag(
         dragStartTarget.current = null;
         lockedAxis.current = null;
         setIsDragging(false);
+        setDragAxis(null);
         onCommit(action);
       } else {
         resetDragState(
           setOffset,
           setDragProgress,
           setIsDragging,
+          setDragAxis,
           startPos,
           pointerId,
           dragStartTarget,
@@ -364,6 +379,7 @@ export function useCardDrag(
       setOffset,
       setDragProgress,
       setIsDragging,
+      setDragAxis,
       startPos,
       pointerId,
       dragStartTarget,
@@ -397,6 +413,7 @@ export function useCardDrag(
       setOffset,
       setDragProgress,
       setIsDragging,
+      setDragAxis,
       startPos,
       pointerId,
       dragStartTarget,
@@ -404,7 +421,7 @@ export function useCardDrag(
     );
   }, [cardRef]);
 
-  const dragAction = inferActionFromAxis(offset, lockedAxis.current);
+  const dragAction = inferActionFromAxis(offset, dragAxis);
 
   return {
     drag: { offset, isDragging, isFlyingOff, dragAction, dragProgress },
