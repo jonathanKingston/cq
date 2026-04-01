@@ -47,6 +47,14 @@ type DragDebugPayload = {
 function emitDragDebug(payload: Omit<DragDebugPayload, "timestamp">) {
   const entry: DragDebugPayload = { ...payload, timestamp: Date.now() };
   // #region agent log
+  try {
+    const maybeRequire = (globalThis as { require?: (id: string) => { appendFileSync: (path: string, data: string) => void } }).require;
+    if (maybeRequire) {
+      maybeRequire("fs").appendFileSync("/opt/cursor/logs/debug.log", `${JSON.stringify(entry)}\n`);
+    }
+  } catch {
+    // Browser runtime usually has no filesystem access; console log remains authoritative.
+  }
   console.log("[card-drag-debug]", JSON.stringify(entry));
   // #endregion
   if (typeof window !== "undefined") {
