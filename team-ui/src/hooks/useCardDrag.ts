@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Selection } from "../types";
 
 // Drag thresholds — adjust these to tune sensitivity.
@@ -36,34 +36,6 @@ export interface UseCardDragResult {
   snapBack: () => void;
 }
 
-type DragDebugPayload = {
-  hypothesisId: string;
-  location: string;
-  message: string;
-  data: Record<string, unknown>;
-  timestamp: number;
-};
-
-function emitDragDebug(payload: Omit<DragDebugPayload, "timestamp">) {
-  const entry: DragDebugPayload = { ...payload, timestamp: Date.now() };
-  // #region agent log
-  try {
-    const maybeRequire = (globalThis as { require?: (id: string) => { appendFileSync: (path: string, data: string) => void } }).require;
-    if (maybeRequire) {
-      maybeRequire("fs").appendFileSync("/opt/cursor/logs/debug.log", `${JSON.stringify(entry)}\n`);
-    }
-  } catch {
-    // Browser runtime usually has no filesystem access; console log remains authoritative.
-  }
-  console.log("[card-drag-debug]", JSON.stringify(entry));
-  // #endregion
-  if (typeof window !== "undefined") {
-    const debugWindow = window as Window & { __cardDragDebug?: DragDebugPayload[] };
-    if (!debugWindow.__cardDragDebug) debugWindow.__cardDragDebug = [];
-    debugWindow.__cardDragDebug.push(entry);
-  }
-}
-
 function inferAction(offset: DragOffset): Selection {
   const absX = Math.abs(offset.x);
   const absY = Math.abs(offset.y);
@@ -93,6 +65,7 @@ export function useCardDrag(
 
   const startPos = useRef<{ x: number; y: number } | null>(null);
   const pointerId = useRef<number | null>(null);
+  const removeWindowListeners = useRef<(() => void) | null>(null);
 
   const getThresholds = useCallback(() => {
     const el = cardRef.current;
@@ -116,89 +89,43 @@ export function useCardDrag(
     [getThresholds],
   );
 
+  const detachWindowListeners = useCallback(() => {
+    removeWindowListeners.current?.();
+    removeWindowListeners.current = null;
+  }, []);
+
+  useEffect(() => {
+    return () => detachWindowListeners();
+  }, [detachWindowListeners]);
+
   const onPointerDown = useCallback((e: React.PointerEvent) => {
     if (flyingOffRef.current || disabled) return;
+    detachWindowListeners();
     pointerId.current = e.pointerId;
     startPos.current = { x: e.clientX, y: e.clientY };
     setIsDragging(true);
-    // #region agent log
-    emitDragDebug({
-      hypothesisId: "C",
-      location: "useCardDrag.ts:onPointerDown",
-      message: "pointer-down captured",
-      data: { pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, disabled },
-    });
-    // #endregion
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-  }, [disabled]);
 
-  const onPointerMove = useCallback(
-    (e: React.PointerEvent) => {
-      if (!startPos.current || e.pointerId !== pointerId.current) {
-        // #region agent log
-        emitDragDebug({
-          hypothesisId: "C",
-          location: "useCardDrag.ts:onPointerMove",
-          message: "pointer-move ignored due to pointer mismatch or missing startPos",
-          data: {
-            hasStartPos: Boolean(startPos.current),
-            eventPointerId: e.pointerId,
-            trackedPointerId: pointerId.current,
-          },
-        });
-        // #endregion
-        return;
-      }
-      const dx = e.clientX - startPos.current.x;
-      const dy = e.clientY - startPos.current.y;
+    const onWindowPointerMove = (event: PointerEvent) => {
+      if (!startPos.current || event.pointerId !== pointerId.current) return;
+      const dx = event.clientX - startPos.current.x;
+      const dy = event.clientY - startPos.current.y;
       const off = { x: dx, y: dy };
-      const action = inferAction(off);
-      const thresholds = getThresholds();
-      const progress = computeProgress(off);
       setOffset(off);
-      setDragProgress(progress);
-      // #region agent log
-      emitDragDebug({
-        hypothesisId: "A_B",
-        location: "useCardDrag.ts:onPointerMove",
-        message: "pointer-move computed drag state",
-        data: {
-          offset: off,
-          action,
-          progress,
-          thresholds,
-          axisRatio: Math.abs(dx) > 0 ? Math.abs(dy) / Math.abs(dx) : null,
-        },
-      });
-      // #endregion
-    },
-    [computeProgress, getThresholds],
-  );
+      setDragProgress(computeProgress(off));
+    };
 
-  const onPointerUp = useCallback(
-    (e: React.PointerEvent) => {
-      if (e.pointerId !== pointerId.current) return;
-      if (!startPos.current) return;
-      const currentOffset = { x: e.clientX - startPos.current.x, y: e.clientY - startPos.current.y };
+    const onWindowPointerUp = (event: PointerEvent) => {
+      if (event.pointerId !== pointerId.current || !startPos.current) return;
+      const currentOffset = {
+        x: event.clientX - startPos.current.x,
+        y: event.clientY - startPos.current.y,
+      };
       const action = inferAction(currentOffset);
       const progress = computeProgress(currentOffset);
-
       startPos.current = null;
       pointerId.current = null;
       setIsDragging(false);
-      // #region agent log
-      emitDragDebug({
-        hypothesisId: "D",
-        location: "useCardDrag.ts:onPointerUp",
-        message: "pointer-up final action decision",
-        data: {
-          currentOffset,
-          action,
-          progress,
-          willCommit: Boolean(action && progress >= 1),
-        },
-      });
-      // #endregion
+      detachWindowListeners();
 
       if (action && progress >= 1) {
         onCommit(action);
@@ -206,29 +133,31 @@ export function useCardDrag(
         setOffset({ x: 0, y: 0 });
         setDragProgress(0);
       }
-    },
-    [computeProgress, onCommit],
-  );
+    };
 
-  const onPointerCancel = useCallback(
-    (e: React.PointerEvent) => {
-      if (e.pointerId !== pointerId.current) return;
-      // #region agent log
-      emitDragDebug({
-        hypothesisId: "C",
-        location: "useCardDrag.ts:onPointerCancel",
-        message: "pointer-cancel resetting drag state",
-        data: { pointerId: e.pointerId },
-      });
-      // #endregion
+    const onWindowPointerCancel = (event: PointerEvent) => {
+      if (event.pointerId !== pointerId.current) return;
       startPos.current = null;
       pointerId.current = null;
       setIsDragging(false);
       setOffset({ x: 0, y: 0 });
       setDragProgress(0);
-    },
-    [],
-  );
+      detachWindowListeners();
+    };
+
+    window.addEventListener("pointermove", onWindowPointerMove);
+    window.addEventListener("pointerup", onWindowPointerUp);
+    window.addEventListener("pointercancel", onWindowPointerCancel);
+
+    removeWindowListeners.current = () => {
+      window.removeEventListener("pointermove", onWindowPointerMove);
+      window.removeEventListener("pointerup", onWindowPointerUp);
+      window.removeEventListener("pointercancel", onWindowPointerCancel);
+    };
+    e.preventDefault();
+  }, [computeProgress, detachWindowListeners, disabled, onCommit]);
+
+  const noopPointerHandler = useCallback(() => {}, []);
 
   const flyOff = useCallback(
     async (action: Exclude<Selection, null>) => {
@@ -249,21 +178,24 @@ export function useCardDrag(
   );
 
   const snapBack = useCallback(() => {
-    if (pointerId.current !== null) {
-      cardRef.current?.releasePointerCapture(pointerId.current);
-    }
+    detachWindowListeners();
     setOffset({ x: 0, y: 0 });
     setDragProgress(0);
     setIsDragging(false);
     startPos.current = null;
     pointerId.current = null;
-  }, [cardRef]);
+  }, [detachWindowListeners]);
 
   const dragAction = inferAction(offset);
 
   return {
     drag: { offset, isDragging, isFlyingOff, dragAction, dragProgress },
-    handlers: { onPointerDown, onPointerMove, onPointerUp, onPointerCancel },
+    handlers: {
+      onPointerDown,
+      onPointerMove: noopPointerHandler,
+      onPointerUp: noopPointerHandler,
+      onPointerCancel: noopPointerHandler,
+    },
     flyOff,
     snapBack,
   };

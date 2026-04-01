@@ -1,4 +1,4 @@
-import { forwardRef, useEffect } from "react";
+import { forwardRef } from "react";
 import type { KnowledgeUnit, Selection } from "../types";
 import { DomainTags } from "./DomainTags";
 import { timeAgo } from "../utils";
@@ -50,43 +50,6 @@ export const ReviewCard = forwardRef<HTMLDivElement, Props>(
         ? `transform ${FLY_OFF_MS}ms ease-in, box-shadow ${FLY_OFF_MS}ms ease-in`
         : `transform ${SNAP_BACK_MS}ms ease-out, box-shadow ${SNAP_BACK_MS}ms ease-out`;
     const shadow = `0 ${4 * shadowScale}px ${20 * shadowScale}px rgba(0,0,0,${0.08 * shadowScale})`;
-
-    useEffect(() => {
-      const payload = {
-        hypothesisId: "E",
-        location: "ReviewCard.tsx:activeState",
-        message: "review-card visual state updated",
-        data: {
-          activeState,
-          selection,
-          dragAction: drag.dragAction,
-          isDragging: drag.isDragging,
-          isFlyingOff: drag.isFlyingOff,
-          dragProgress: drag.dragProgress,
-          offset: drag.offset,
-        },
-        timestamp: Date.now(),
-      };
-      // #region agent log
-      try {
-        const maybeRequire = (globalThis as { require?: (id: string) => { appendFileSync: (path: string, data: string) => void } }).require;
-        if (maybeRequire) {
-          maybeRequire("fs").appendFileSync("/opt/cursor/logs/debug.log", `${JSON.stringify(payload)}\n`);
-        }
-      } catch {
-        // Browser runtime usually has no filesystem access; console log remains authoritative.
-      }
-      console.log("[card-drag-debug]", JSON.stringify(payload));
-      // #endregion
-    }, [
-      activeState,
-      drag.dragAction,
-      drag.dragProgress,
-      drag.isDragging,
-      drag.isFlyingOff,
-      drag.offset,
-      selection,
-    ]);
 
     return (
       <div
