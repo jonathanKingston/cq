@@ -10,6 +10,7 @@ export const SNAP_BACK_MS = 200;
 export const FLY_OFF_MS = 300;
 export const GESTURE_SLOP_PX = 10;
 export const AXIS_DOMINANCE_RATIO = 1.5;
+type DragAxis = "horizontal" | "vertical";
 
 export interface DragOffset {
   x: number;
@@ -67,11 +68,32 @@ function inferAction(offset: DragOffset): Selection {
   return null;
 }
 
-function constrainOffset(
+function inferAxis(offset: DragOffset): DragAxis | null {
+  const absX = Math.abs(offset.x);
+  const absY = Math.abs(offset.y);
+  if (absX < GESTURE_SLOP_PX && absY < GESTURE_SLOP_PX) return null;
+  if (absX >= absY * AXIS_DOMINANCE_RATIO) return "horizontal";
+  if (absY >= absX * AXIS_DOMINANCE_RATIO) return "vertical";
+  return null;
+}
+
+function inferActionFromAxis(
   offset: DragOffset,
-  action: Exclude<Selection, null>,
+  axis: DragAxis | null,
+): Selection {
+  if (!axis) return inferAction(offset);
+  if (axis === "vertical") {
+    return Math.abs(offset.y) >= GESTURE_SLOP_PX ? "skip" : null;
+  }
+  if (Math.abs(offset.x) < GESTURE_SLOP_PX) return null;
+  return offset.x > 0 ? "approve" : "reject";
+}
+
+function constrainOffsetToAxis(
+  offset: DragOffset,
+  axis: DragAxis,
 ): DragOffset {
-  return action === "skip"
+  return axis === "vertical"
     ? { x: 0, y: offset.y }
     : { x: offset.x, y: 0 };
 }
@@ -83,12 +105,12 @@ function resetDragState(
   startPos: React.RefObject<{ x: number; y: number } | null>,
   pointerId: React.RefObject<number | null>,
   dragStartTarget: React.RefObject<EventTarget | null>,
-  lockedAction: React.RefObject<Exclude<Selection, null> | null>,
+  lockedAxis: React.RefObject<DragAxis | null>,
 ) {
   startPos.current = null;
   pointerId.current = null;
   dragStartTarget.current = null;
-  lockedAction.current = null;
+  lockedAxis.current = null;
   setIsDragging(false);
   setOffset({ x: 0, y: 0 });
   setDragProgress(0);
@@ -110,7 +132,7 @@ export function useCardDrag(
   const startPos = useRef<{ x: number; y: number } | null>(null);
   const pointerId = useRef<number | null>(null);
   const dragStartTarget = useRef<EventTarget | null>(null);
-  const lockedAction = useRef<Exclude<Selection, null> | null>(null);
+  const lockedAxis = useRef<DragAxis | null>(null);
 
   const getThresholds = useCallback(() => {
     const el = cardRef.current;
@@ -122,11 +144,11 @@ export function useCardDrag(
   }, [cardRef]);
 
   const computeProgress = useCallback(
-    (off: DragOffset): number => {
-      const action = inferAction(off);
-      if (!action) return 0;
+    (off: DragOffset, axis: DragAxis | null = null): number => {
+      const resolvedAxis = axis ?? inferAxis(off);
+      if (!resolvedAxis) return 0;
       const thresholds = getThresholds();
-      if (action === "approve" || action === "reject") {
+      if (resolvedAxis === "horizontal") {
         return Math.min(Math.abs(off.x) / thresholds.horizontal, 1);
       }
       return Math.min(Math.abs(off.y) / thresholds.vertical, 1);
@@ -140,7 +162,7 @@ export function useCardDrag(
     pointerId.current = e.pointerId;
     startPos.current = { x: e.clientX, y: e.clientY };
     dragStartTarget.current = e.target;
-    lockedAction.current = null;
+    lockedAxis.current = null;
   }, [disabled]);
 
   const onPointerMove = useCallback(
@@ -150,7 +172,7 @@ export function useCardDrag(
       const dx = e.clientX - startPos.current.x;
       const dy = e.clientY - startPos.current.y;
       const off = { x: dx, y: dy };
-      const action = inferAction(off);
+      const axis = inferAxis(off);
 
       if (!isDragging) {
         if (Math.abs(dx) < GESTURE_SLOP_PX && Math.abs(dy) < GESTURE_SLOP_PX) {
@@ -160,7 +182,7 @@ export function useCardDrag(
         // When a gesture starts inside the scrollable body, keep vertical motion
         // reserved for native scrolling and only lock into card drag on a clear
         // horizontal swipe.
-        if (startedInScrollRegion(dragStartTarget.current) && action === "skip") {
+        if (startedInScrollRegion(dragStartTarget.current) && axis === "vertical") {
           resetDragState(
             setOffset,
             setDragProgress,
@@ -168,28 +190,28 @@ export function useCardDrag(
             startPos,
             pointerId,
             dragStartTarget,
-            lockedAction,
+            lockedAxis,
           );
           return;
         }
 
-        if (!action) {
+        if (!axis) {
           return;
         }
 
-        lockedAction.current = action;
+        lockedAxis.current = axis;
         setIsDragging(true);
         (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
       }
 
-      const activeAction = lockedAction.current;
-      if (!activeAction) {
+      const activeAxis = lockedAxis.current;
+      if (!activeAxis) {
         return;
       }
 
-      const constrainedOffset = constrainOffset(off, activeAction);
+      const constrainedOffset = constrainOffsetToAxis(off, activeAxis);
       setOffset(constrainedOffset);
-      setDragProgress(computeProgress(constrainedOffset));
+      setDragProgress(computeProgress(constrainedOffset, activeAxis));
     },
     [computeProgress, isDragging],
   );
@@ -200,15 +222,16 @@ export function useCardDrag(
       if (e.pointerId !== pointerId.current) return;
       if (!startPos.current) return;
       const rawOffset = { x: e.clientX - startPos.current.x, y: e.clientY - startPos.current.y };
-      const action = lockedAction.current;
-      const currentOffset = action ? constrainOffset(rawOffset, action) : rawOffset;
-      const progress = action ? computeProgress(currentOffset) : 0;
+      const axis = lockedAxis.current;
+      const currentOffset = axis ? constrainOffsetToAxis(rawOffset, axis) : rawOffset;
+      const action = inferActionFromAxis(currentOffset, axis);
+      const progress = axis ? computeProgress(currentOffset, axis) : 0;
 
       if (action && progress >= 1) {
         startPos.current = null;
         pointerId.current = null;
         dragStartTarget.current = null;
-        lockedAction.current = null;
+        lockedAxis.current = null;
         setIsDragging(false);
         onCommit(action);
       } else {
@@ -219,7 +242,7 @@ export function useCardDrag(
           startPos,
           pointerId,
           dragStartTarget,
-          lockedAction,
+          lockedAxis,
         );
       }
     },
@@ -237,7 +260,7 @@ export function useCardDrag(
         startPos,
         pointerId,
         dragStartTarget,
-        lockedAction,
+        lockedAxis,
       );
     },
     [],
@@ -249,7 +272,7 @@ export function useCardDrag(
     if (!touch) return;
     startPos.current = { x: touch.clientX, y: touch.clientY };
     dragStartTarget.current = e.target;
-    lockedAction.current = null;
+    lockedAxis.current = null;
   }, [disabled]);
 
   const onTouchMoveCapture = useCallback(
@@ -260,37 +283,37 @@ export function useCardDrag(
       const dx = touch.clientX - startPos.current.x;
       const dy = touch.clientY - startPos.current.y;
       const off = { x: dx, y: dy };
-      const action = inferAction(off);
+      const axis = inferAxis(off);
 
       if (!isDragging) {
         if (Math.abs(dx) < GESTURE_SLOP_PX && Math.abs(dy) < GESTURE_SLOP_PX) {
           return;
         }
 
-        if (startedInScrollRegion(dragStartTarget.current) && action === "skip") {
+        if (startedInScrollRegion(dragStartTarget.current) && axis === "vertical") {
           startPos.current = null;
           dragStartTarget.current = null;
-          lockedAction.current = null;
+          lockedAxis.current = null;
           return;
         }
 
-        if (!action) {
+        if (!axis) {
           return;
         }
 
-        lockedAction.current = action;
+        lockedAxis.current = axis;
         setIsDragging(true);
       }
 
-      const activeAction = lockedAction.current;
-      if (!activeAction) {
+      const activeAxis = lockedAxis.current;
+      if (!activeAxis) {
         return;
       }
 
       e.preventDefault();
-      const constrainedOffset = constrainOffset(off, activeAction);
+      const constrainedOffset = constrainOffsetToAxis(off, activeAxis);
       setOffset(constrainedOffset);
-      setDragProgress(computeProgress(constrainedOffset));
+      setDragProgress(computeProgress(constrainedOffset, activeAxis));
     },
     [computeProgress, isDragging],
   );
@@ -299,25 +322,26 @@ export function useCardDrag(
     (e: React.TouchEvent) => {
       if (!startPos.current) {
         dragStartTarget.current = null;
-        lockedAction.current = null;
+        lockedAxis.current = null;
         return;
       }
 
       const touch = e.changedTouches[0];
-      const action = lockedAction.current;
+      const axis = lockedAxis.current;
       const rawOffset = touch
         ? {
             x: touch.clientX - startPos.current.x,
             y: touch.clientY - startPos.current.y,
           }
         : offset;
-      const currentOffset = action ? constrainOffset(rawOffset, action) : rawOffset;
-      const progress = action ? computeProgress(currentOffset) : 0;
+      const currentOffset = axis ? constrainOffsetToAxis(rawOffset, axis) : rawOffset;
+      const action = inferActionFromAxis(currentOffset, axis);
+      const progress = axis ? computeProgress(currentOffset, axis) : 0;
 
       if (action && progress >= 1) {
         startPos.current = null;
         dragStartTarget.current = null;
-        lockedAction.current = null;
+        lockedAxis.current = null;
         setIsDragging(false);
         onCommit(action);
       } else {
@@ -328,7 +352,7 @@ export function useCardDrag(
           startPos,
           pointerId,
           dragStartTarget,
-          lockedAction,
+          lockedAxis,
         );
       }
     },
@@ -343,7 +367,7 @@ export function useCardDrag(
       startPos,
       pointerId,
       dragStartTarget,
-      lockedAction,
+      lockedAxis,
     );
   }, []);
 
@@ -376,11 +400,11 @@ export function useCardDrag(
       startPos,
       pointerId,
       dragStartTarget,
-      lockedAction,
+      lockedAxis,
     );
   }, [cardRef]);
 
-  const dragAction = lockedAction.current ?? inferAction(offset);
+  const dragAction = inferActionFromAxis(offset, lockedAxis.current);
 
   return {
     drag: { offset, isDragging, isFlyingOff, dragAction, dragProgress },
