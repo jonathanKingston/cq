@@ -17,6 +17,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from ._util import _as_list
 from .models import KnowledgeUnit
 from .scoring import calculate_relevance
 
@@ -332,8 +333,8 @@ class LocalStore:
         self,
         domains: list[str],
         *,
-        language: str | None = None,
-        framework: str | None = None,
+        languages: list[str] | None = None,
+        frameworks: list[str] | None = None,
         limit: int = 5,
     ) -> list[KnowledgeUnit]:
         """Search for knowledge units by domain tags with relevance ranking.
@@ -347,6 +348,11 @@ class LocalStore:
         Raises:
             ValueError: If limit is not positive.
         """
+        domains = _as_list(domains)
+        if languages is not None:
+            languages = _as_list(languages)
+        if frameworks is not None:
+            frameworks = _as_list(frameworks)
         if limit <= 0:
             raise ValueError("limit must be positive")
         if not domains:
@@ -409,8 +415,8 @@ class LocalStore:
             relevance = calculate_relevance(
                 unit,
                 normalized,
-                query_language=language,
-                query_framework=framework,
+                query_languages=languages,
+                query_frameworks=frameworks,
             )
             scored.append((relevance * unit.evidence.confidence, unit))
 

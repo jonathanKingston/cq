@@ -123,7 +123,70 @@ class TestLocalOnlyMode:
         with pytest.raises(RuntimeError, match="remote API"):
             client.flag("ku_ffffffffffffffffffffffffffffffff", FlagReason.STALE, tier=Tier.PRIVATE)
 
-    def test_query_language_boosts_ranking(self, client: Client):
+    def test_query_bare_string_domains_coerced_to_list(self, client: Client):
+        client.propose(
+            summary="Bare string test",
+            detail="Detail.",
+            action="Action.",
+            domains=["api"],
+        )
+        results = client.query("api")  # type: ignore[arg-type]
+        assert len(results) == 1
+
+    def test_query_bare_string_languages_coerced_to_list(self, client: Client):
+        client.propose(
+            summary="Python insight",
+            detail="Detail.",
+            action="Action.",
+            domains=["api"],
+            languages=["python"],
+        )
+        results = client.query(["api"], languages="python")  # type: ignore[arg-type]
+        assert len(results) == 1
+        assert results[0].context.languages == ["python"]
+
+    def test_query_bare_string_frameworks_coerced_to_list(self, client: Client):
+        client.propose(
+            summary="Django insight",
+            detail="Detail.",
+            action="Action.",
+            domains=["web"],
+            frameworks=["django"],
+        )
+        results = client.query(["web"], frameworks="django")  # type: ignore[arg-type]
+        assert len(results) == 1
+        assert results[0].context.frameworks == ["django"]
+
+    def test_propose_bare_string_domains_coerced_to_list(self, client: Client):
+        ku = client.propose(
+            summary="Single domain",
+            detail="Detail.",
+            action="Action.",
+            domains="api",  # type: ignore[arg-type]
+        )
+        assert ku.domains == ["api"]
+
+    def test_propose_bare_string_languages_coerced_to_list(self, client: Client):
+        ku = client.propose(
+            summary="Single lang",
+            detail="Detail.",
+            action="Action.",
+            domains=["api"],
+            languages="python",  # type: ignore[arg-type]
+        )
+        assert ku.context.languages == ["python"]
+
+    def test_propose_bare_string_frameworks_coerced_to_list(self, client: Client):
+        ku = client.propose(
+            summary="Single fw",
+            detail="Detail.",
+            action="Action.",
+            domains=["api"],
+            frameworks="django",  # type: ignore[arg-type]
+        )
+        assert ku.context.frameworks == ["django"]
+
+    def test_query_languages_boosts_ranking(self, client: Client):
         client.propose(
             summary="Python insight",
             detail="Detail.",
@@ -138,7 +201,7 @@ class TestLocalOnlyMode:
             domains=["api"],
             languages=["go"],
         )
-        results = client.query(["api"], language="python")
+        results = client.query(["api"], languages=["python"])
         assert len(results) == 2
         assert results[0].context.languages == ["python"]
 
@@ -153,7 +216,7 @@ class TestFullLifecycle:
             languages=["python"],
         )
 
-        results = client.query(["api", "stripe"], language="python")
+        results = client.query(["api", "stripe"], languages=["python"])
         assert len(results) == 1
         assert results[0].evidence.confidence == 0.5
 
@@ -229,6 +292,28 @@ class TestRemoteIntegration:
         assert len(results) == 2
         ids = {r.id for r in results}
         assert "ku_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa01" in ids
+        c.close()
+
+    def test_remote_query_sends_plural_language_and_framework_params(self, tmp_path: Path, httpx_mock):
+        """Remote query sends plural 'languages'/'frameworks' keys, not singular."""
+        remote_unit = {
+            "id": "ku_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa01",
+            "domains": ["api"],
+            "insight": {"summary": "S", "detail": "D", "action": "A"},
+            "tier": "private",
+        }
+        httpx_mock.add_response(
+            url=httpx.URL(
+                "http://test-remote/query",
+                params={"domains": ["api"], "limit": "5", "languages": ["python"], "frameworks": ["django"]},
+            ),
+            json=[remote_unit],
+        )
+
+        c = Client(addr="http://test-remote", local_db_path=tmp_path / "test.db")
+        results = c.query(["api"], languages=["python"], frameworks=["django"])
+        assert len(results) == 1
+        assert results[0].id == "ku_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa01"
         c.close()
 
     def test_propose_returns_server_response_when_remote_accepts(self, tmp_path: Path, httpx_mock):

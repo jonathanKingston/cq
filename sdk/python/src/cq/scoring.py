@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime
 
+from ._util import _as_list
 from .models import Flag, FlagReason, KnowledgeUnit
 
 CONFIRMATION_BOOST = 0.1
@@ -47,14 +48,20 @@ def apply_flag(
 def calculate_relevance(
     unit: KnowledgeUnit,
     query_domains: list[str],
-    query_language: str | None = None,
-    query_framework: str | None = None,
+    query_languages: list[str] | None = None,
+    query_frameworks: list[str] | None = None,
 ) -> float:
     """Score relevance from 0.0 to 1.0 based on domain overlap and context match.
 
     Domain overlap is the primary signal (weighted at 0.7).
     Language and framework matches are secondary signals (0.15 each).
     """
+    query_domains = _as_list(query_domains)
+    if query_languages is not None:
+        query_languages = _as_list(query_languages)
+    if query_frameworks is not None:
+        query_frameworks = _as_list(query_frameworks)
+
     domain_weight = 0.7
     language_weight = 0.15
     framework_weight = 0.15
@@ -67,14 +74,14 @@ def calculate_relevance(
     else:
         domain_score = 0.0
 
-    # Language match is binary.
+    # Language match: any overlap between query and unit languages.
     language_score = 0.0
-    if query_language and query_language in unit.context.languages:
+    if query_languages and any(lang in unit.context.languages for lang in query_languages):
         language_score = 1.0
 
-    # Framework match is binary.
+    # Framework match: any overlap between query and unit frameworks.
     framework_score = 0.0
-    if query_framework and query_framework in unit.context.frameworks:
+    if query_frameworks and any(fw in unit.context.frameworks for fw in query_frameworks):
         framework_score = 1.0
 
     return domain_weight * domain_score + language_weight * language_score + framework_weight * framework_score
